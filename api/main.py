@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from api.errors import InterviewStateError, QuestionSelectionError, SessionNotFoundError
+from api.errors import InterviewStateError, QuestionSelectionError, SessionNotFoundError, ExternalServiceError
 from api.routers.health import router as health_router
 from api.routers.interviews import router as interviews_router
 
@@ -36,3 +36,17 @@ async def handle_question_selection_error(
     exc: QuestionSelectionError,
 ) -> JSONResponse:
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(ExternalServiceError)# 装饰器 给app注册功能
+async def handle_external_service_error(
+    request: Request,
+    exc: ExternalServiceError, # 之前创建的错误对象 ExternalServiceError类对象
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=502,
+        content={
+            "detail": str(exc),
+            "service": exc.service,
+        },
+    )

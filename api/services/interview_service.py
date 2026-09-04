@@ -28,6 +28,7 @@ from api.session_store import save_session, update_session
 
 
 def create_interview(request: CreateInterviewRequest) -> CreateInterviewResponse:
+    print("now is in create_interview")
     db = get_db()
     plan = build_interview_plan(
         db=db,

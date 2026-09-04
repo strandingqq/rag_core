@@ -6,8 +6,19 @@ from api.domain.models import InterviewReport, InterviewSession, TurnSummary
 from api.infra.llm import build_llm
 from api.infra.prompts import generate_interview_report_prompt
 
+""" 
+完整面试报告生成 可以和单题合并
+
+ensure_session_completed   确定当前面试题目已全部回答结束
+build_turn_summaries       把当前session每道题的 valResult 组织到新的 TurnSummary 中
+generate_report_summary    把组织的TurnSummary和score交给llm 生成报告
+generate_interview_report  完整流程
+"""
 
 def ensure_session_completed(session: InterviewSession) -> None:
+    """ 
+    通过条件判断能够当前以及完成了所有题目的面试
+    """
     if session.status != "completed":
         raise ValueError("interview is not completed")
     if not session.turns:
@@ -24,6 +35,14 @@ def ensure_session_completed(session: InterviewSession) -> None:
 
 
 def build_turn_summaries(session: InterviewSession) -> list[TurnSummary]:
+    """ 
+    把每个turn中保存的每道题的 valResult 组织到新的 TurnSummary 结构体当中
+
+    Args:
+        session
+    Returns:
+        list[TurnSummary]
+    """
     summaries: list[TurnSummary] = []
     for turn in session.turns:
         if turn.evaluation is None or turn.score is None:
@@ -72,6 +91,14 @@ def generate_report_summary(
     level: str,
     llm: Any | None = None,
 ) -> str:
+    """ 
+    把 turn_summary 的摘要内容交给llm 生成str的最终报告
+
+    Args:
+        list[TurnSummary] \ total_score \ level \ llm
+    Returns:
+        文字总结 str
+    """
     from langchain_core.prompts import ChatPromptTemplate
 
     llm = llm or build_llm()
@@ -92,6 +119,13 @@ def generate_interview_report(
     session: InterviewSession,
     llm: Any | None = None,
 ) -> InterviewReport:
+    """ 
+    检验面试已经完成(ensure_session_completed) 汇总结果(build_turn_summaries) 计算总分 生成最终面试报告
+    Args:
+        session \ llm
+    Returns:
+        InterviewReport 最终报告
+    """
     ensure_session_completed(session)
     turn_summaries = build_turn_summaries(session)
     total_score = calculate_total_score(turn_summaries)

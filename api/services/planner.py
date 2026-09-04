@@ -14,6 +14,14 @@ def build_interview_plan(
     num_questions: int,
     difficulty: str = "medium",
 ) -> InterviewPlan:
+    """ 
+    根据 知识点 和 难度 从 Chroma 中筛选题目，构建一次面试使用的题单计划。
+
+    Args:
+        db 、 topic 、 num_questions 、 difficulty
+    Returns:
+        InterviewPlan 对象
+    """
     if not role or not role.strip():
         raise QuestionSelectionError("role cannot be empty")
     if not topics:
@@ -66,10 +74,13 @@ def build_interview_plan(
     documents = selected_result.get("documents", [])
     metadatas = selected_result.get("metadatas", [])
 
+    # 构造 InterviewPlanItem
     items: list[InterviewPlanItem] = []
     for index, (doc_id, document, metadata) in enumerate(
         zip(ids, documents, metadatas)
     ):
+        # 注意哦 这里的metedata是可以get的 它是 dict类型
+        # 但是document不是 它是完全的文字 组织过了的 无法进行数据获取
         metadata = metadata or {}
         question_id = metadata.get("question_id", doc_id)
         question_text = metadata.get("question") or document or ""

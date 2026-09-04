@@ -23,6 +23,12 @@ def build_followup_materials(
     session: InterviewSession,
     turn: InterviewTurn,
 ) -> FollowupMaterials:
+    """ 
+    根据当前 index 在面试计划中找到原题，提取参考答案, 组织为追问材料 FollowupMaterials
+
+    Args:session turn
+    Returns:FollowupMaterials类对象 补充材料
+    """
     question = session.plan.items[turn.index].question
     return FollowupMaterials(
         expected_answer=question.expected_answer,
@@ -35,7 +41,15 @@ def generate_followup_question(
     turn: InterviewTurn,
     materials: FollowupMaterials,
     llm: Any | None = None,
-) -> str:
+) -> str:    
+    """ 
+    根据 主问题 用户主回答 参考答案 追问方向 调用LLM生成追问问题
+
+    Args:
+        turn 、 materials 用于提供参考答案 追问方向 、 llm
+    Returns:
+        content(str)
+    """
     if not turn.main_answer or not turn.main_answer.strip():
         raise ValueError("main answer cannot be empty")
 
@@ -64,7 +78,15 @@ def evaluate_turn(
     turn: InterviewTurn,
     materials: EvaluationMaterials,
     llm: Any | None = None,
-) -> EvaluationResult:
+) -> EvaluationResult:    
+    """ 
+    根据主回答、追问回答和参考答案调用 LLM 评分，并解析成结构化评分结果
+
+    Args:
+        turn 单题记录 materiasls llm
+    Returns:
+        valResult 类对象
+    """
     if not turn.main_answer or not turn.main_answer.strip():
         raise ValueError("main answer cannot be empty")
     if not turn.followup_answer or not turn.followup_answer.strip():
