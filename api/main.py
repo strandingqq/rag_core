@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from api.errors import InterviewStateError, QuestionSelectionError, SessionNotFoundError, ExternalServiceError
 from api.routers.health import router as health_router
 from api.routers.interviews import router as interviews_router
+from api.routers.learning_advice import router as learning_advice_router
 
 app = FastAPI(
     title="AI Interview Training API",
@@ -12,7 +13,7 @@ app = FastAPI(
 
 app.include_router(health_router)
 app.include_router(interviews_router)
-
+app.include_router(learning_advice_router)
 
 @app.exception_handler(SessionNotFoundError)
 async def handle_session_not_found(

@@ -299,3 +299,380 @@ api/tests/test_learning_advice_api.py
 - 增加 HITL，在低置信度建议或评分异常时请求人工确认。
 - 增加 agent eval，用固定样例评估学习建议质量。
 - 让下一轮题单根据历史表现自适应调整。
+
+---
+
+# 主流程 Agent 化开发顺序
+
+## 新阶段目标
+
+Learning Advisor Agent 完成后，下一阶段开始把原来的主流程逐步替换成 Agent workflow。
+
+但是外部 API 先保持不变，仍然保留原来的接口：
+
+```text
+POST /interviews
+GET /interviews/{session_id}/current-question
+POST /interviews/{session_id}/main-answer
+GET /interviews/{session_id}/followup-question
+POST /interviews/{session_id}/followup-answer
+GET /interviews/{session_id}/report
+GET /interviews/{session_id}/learning-advice
+```
+
+这一阶段的核心原则：
+
+- Agent 负责判断、生成、解释。
+- Service 负责状态校验、调用工具、写入 session。
+- 状态推进必须由确定性代码执行，不让 LLM 直接修改 `InterviewSession`。
+- 每次替换只替换一个环节，保证可以定位问题。
+
+## 推荐开发顺序
+
+### 0. 固化现有 Learning Advisor Agent
+
+目标：
+
+- 确认 `/learning-advice` 能在 `/docs` 跑通。
+- 确认原来的面试主流程没有被破坏。
+- 补齐基础测试。
+
+这一步完成后，再开始动主流程。
+
+### 1. 新增 `InterviewOrchestratorAgent`
+
+这是主流程 Agent 化的第一步。
+
+第一版不要让它执行任何业务动作，只让它根据当前请求和 session 状态输出“下一步应该做什么”。
+
+它的定位是：
+
+```text
+状态理解器 + 动作选择器 + 路由决策器
+```
+
+例如：
+
+- 当前 turn 是 `waiting_main_answer`，用户提交了主回答，则应该进入 `accept_main_answer`。
+- 当前 turn 是 `waiting_followup_answer`，用户请求当前问题，则应该返回追问。
+- 当前 session 已经 `completed`，用户继续提交回答，则应该拒绝。
+- 当前 session 已完成且用户请求报告，则允许返回报告。
+
+第一版 Orchestrator 只做决策，不真正生成追问、不评分、不生成报告。
+
+### 2. 替换追问生成：`InterviewerAgent`
+
+目标：
+
+- 用 Agent 替代当前 `generate_followup_question`。
+- 输出追问问题，同时输出追问意图、目标薄弱点和置信度。
+
+建议输出：
+
+```text
+followup_question
+target_gap
+followup_type
+reason
+confidence
+```
+
+### 3. 替换评分：`EvaluatorAgent`
+
+目标：
+
+- 用 Agent 替代当前 `evaluate_turn`。
+- 输出结构化评分。
+- 增加 `confidence` 和 `needs_human_review`。
+
+这一步开始引入轻量 HITL。
+
+### 4. 替换题单生成：`QuestionPlannerAgent`
+
+目标：
+
+- Agent 负责制定选题策略。
+- Chroma 查询和题目筛选仍由确定性工具执行。
+- 不能让 Agent 直接编造不存在的题。
+
+### 5. 增加 `Guardrails` 和 `HITL`
+
+目标：
+
+- 追问必须只有一个问题。
+- 评分必须在 0-100。
+- 低置信度评分进入人工复核。
+- Agent 建议修改题单时需要人工确认。
+
+### 6. 增加 `Tracing` 和 `Agent Eval`
+
+目标：
+
+- 每次 Agent run 都记录输入、输出、工具调用和错误。
+- 为 Orchestrator、Interviewer、Evaluator 分别准备小型 eval dataset。
+- 每次改 prompt 或 agent 逻辑后能跑回归测试。
+
+---
+
+# Step 1: InterviewOrchestratorAgent 设计
+
+## 设计目标
+
+`InterviewOrchestratorAgent` 是主流程的总控 Agent。
+
+第一版只解决一个问题：
+
+```text
+在当前 session 状态和当前 API 请求下，系统下一步应该执行什么动作？
+```
+
+它不直接：
+
+- 生成题单。
+- 生成追问。
+- 评分。
+- 修改 `session.current_index`。
+- 修改 `turn.status`。
+- 写入 session。
+
+它只输出结构化决策。
+
+## 为什么第一步先做 Orchestrator
+
+原因：
+
+- 它能训练 Agent 的核心能力：状态理解、动作选择、工具规划。
+- 它不会立刻破坏原来的主流程。
+- 它可以作为后面所有 Agent 的入口。
+- 它能为 tracing、eval、HITL 打基础。
+
+## 输入设计
+
+Orchestrator 的输入应该由三部分组成。
+
+### 1. 当前请求事件
+
+建议定义为 `request_event`：
+
+```text
+create_interview
+get_current_question
+submit_main_answer
+get_followup_question
+submit_followup_answer
+get_report
+get_learning_advice
+```
+
+第一版可以先覆盖已有接口，不新增接口。
+
+### 2. Session 快照
+
+不要把整个 dataclass 原样丢给 LLM。
+
+应该先整理成简洁快照：
+
+```text
+session_id
+user_id
+session_status
+current_index
+total_turns
+current_turn_status
+current_question_id
+current_topic
+has_main_answer
+has_followup_question
+has_followup_answer
+has_evaluation
+has_final_report
+```
+
+如果 session 不存在，例如 `POST /interviews`，则 `session_snapshot` 可以是 `None`。
+
+### 3. 请求 payload 摘要
+
+例如：
+
+```text
+has_answer
+answer_length
+answer_preview
+```
+
+不要把用户完整长回答无限制塞给 Orchestrator。第一版只需要判断是否为空、当前请求类型和状态是否匹配。
+
+## 输出设计
+
+建议定义内部 schema：`OrchestratorDecision`。
+
+字段：
+
+```text
+action
+allowed
+reason
+target_turn_index
+required_tools
+confidence
+needs_human_review
+error_code
+error_message
+```
+
+其中 `action` 建议先定义这些枚举：
+
+```text
+create_plan
+return_main_question
+accept_main_answer
+generate_followup
+return_followup_question
+accept_followup_answer
+evaluate_turn
+advance_to_next_question
+generate_report
+return_report
+return_learning_advice
+reject_invalid_request
+```
+
+第一版可以让一个请求对应一个主 action。
+
+例如：
+
+```json
+{
+  "action": "accept_main_answer",
+  "allowed": true,
+  "reason": "Current turn is waiting for a main answer and the request contains a non-empty answer.",
+  "target_turn_index": 0,
+  "required_tools": ["get_current_turn", "save_main_answer", "generate_followup"],
+  "confidence": 0.95,
+  "needs_human_review": false,
+  "error_code": null,
+  "error_message": null
+}
+```
+
+如果请求不合法：
+
+```json
+{
+  "action": "reject_invalid_request",
+  "allowed": false,
+  "reason": "The current turn is waiting for a followup answer, so submitting another main answer is invalid.",
+  "target_turn_index": 0,
+  "required_tools": [],
+  "confidence": 0.98,
+  "needs_human_review": false,
+  "error_code": "INVALID_TURN_STATUS",
+  "error_message": "current turn does not allow submitting main answer"
+}
+```
+
+## 第一版文件结构
+
+建议新增：
+
+```text
+api/
+  agents/
+    orchestrator.py
+    orchestrator_schemas.py
+    orchestrator_tools.py
+```
+
+职责：
+
+```text
+orchestrator_schemas.py
+  定义 RequestEvent、OrchestratorAction、SessionSnapshot、OrchestratorDecision
+
+orchestrator_tools.py
+  build_session_snapshot(session)
+  build_payload_summary(answer=None)
+
+orchestrator.py
+  run_orchestrator(request_event, session=None, payload=None, llm=None)
+```
+
+第一版可以先不用真正 tool calling。
+
+可以先用固定 Python 工具整理上下文，然后让 Agent 输出结构化决策。
+
+## 第一版执行方式
+
+建议采用“旁路接入”。
+
+也就是：先让 service 调用 Orchestrator，但不完全依赖它推进流程。
+
+示例：
+
+```text
+submit_main_answer
+  -> load session
+  -> run_orchestrator("submit_main_answer", session, payload)
+  -> 如果 decision.allowed == false，抛 InterviewStateError
+  -> 如果 decision.action != "accept_main_answer"，抛 InterviewStateError
+  -> 继续执行原来的 _submit_main_answer
+```
+
+这样既接入了 Agent，又不会把状态机完全交给 Agent。
+
+## Orchestrator 的第一批规则
+
+这些规则应该写进 instructions，也应该写进测试。
+
+```text
+1. session.status == completed 时，不允许提交 main answer 或 followup answer。
+2. turn.status == waiting_main_answer 时，可以读取 main question，可以提交 main answer。
+3. turn.status == waiting_main_answer 时，不允许读取 followup question。
+4. turn.status == waiting_followup_answer 时，可以读取 followup question，可以提交 followup answer。
+5. turn.status == waiting_followup_answer 时，不允许再次提交 main answer。
+6. 只有 session.status == completed 且 final_report 存在时，才能 return_report。
+7. 只有 session.status == completed 时，才能 return_learning_advice。
+8. 空 answer 必须 reject_invalid_request。
+```
+
+## 第一版测试计划
+
+建议新增：
+
+```text
+api/tests/test_orchestrator.py
+```
+
+先不测真实 LLM，使用 fake orchestrator 或规则版 fallback。
+
+至少覆盖：
+
+- `waiting_main_answer + get_current_question -> return_main_question`
+- `waiting_main_answer + submit_main_answer -> accept_main_answer`
+- `waiting_main_answer + get_followup_question -> reject_invalid_request`
+- `waiting_followup_answer + get_followup_question -> return_followup_question`
+- `waiting_followup_answer + submit_followup_answer -> accept_followup_answer`
+- `completed + get_report -> return_report`
+- `completed + submit_main_answer -> reject_invalid_request`
+- `empty answer + submit_main_answer -> reject_invalid_request`
+
+## 第一版完成标准
+
+做到下面几点即可：
+
+- 新增 OrchestratorAgent 内部入口。
+- 能生成结构化 `OrchestratorDecision`。
+- 接入至少一个 service 方法，建议先接 `submit_main_answer`。
+- 原有 API 行为不变。
+- 非法状态能被 Orchestrator 拒绝。
+- 单测通过。
+
+## 后续如何升级
+
+第一版稳定后，再逐步升级：
+
+- 把 Orchestrator 从一个 service 接入扩展到所有 interview service 方法。
+- 增加 tracing，记录每次 decision。
+- 给 Orchestrator 做 eval dataset。
+- 让 Orchestrator 支持 handoff 到 `InterviewerAgent`、`EvaluatorAgent`、`LearningAdvisorAgent`。
+- 增加 HITL action，例如 `request_human_review`。
