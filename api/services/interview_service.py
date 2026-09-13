@@ -2,6 +2,8 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime
 
+from api.agents.orchestrator import run_orchestrator
+from api.agents.orchestrator_schemas import OrchestratorAction, RequestEvent
 from api.dependencies import get_db, get_llm
 from api.domain.models import InterviewPlan, InterviewSession, InterviewTurn
 from api.errors import InterviewStateError
@@ -75,6 +77,18 @@ def submit_main_answer(
     request: AnswerRequest,
 ) -> MainAnswerResponse:
     session = load_session(session_id)
+    decision = run_orchestrator(
+        RequestEvent.SUBMIT_MAIN_ANSWER,
+        session=session,
+        answer=request.answer,
+    )
+    if not decision.allowed:
+        raise InterviewStateError(decision.error_message or decision.reason)
+    if decision.action != OrchestratorAction.ACCEPT_MAIN_ANSWER:
+        raise InterviewStateError(
+            f"orchestrator returned unexpected action: {decision.action}"
+        )
+
     session = _submit_main_answer(session, request.answer, llm=get_llm())
     update_session(session)
     turn = get_current_turn(session)
@@ -264,4 +278,3 @@ def _get_question_type(turn: InterviewTurn) -> str:
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
-
