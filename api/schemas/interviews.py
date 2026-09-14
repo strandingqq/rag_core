@@ -31,13 +31,22 @@ class AnswerRequest(BaseModel):
     answer: str = Field(..., min_length=1)
 
 
+# class MainAnswerResponse(BaseModel):
+#     session_id: str
+#     status: str
+#     current_index: int
+#     turn_status: str
+#     followup_question: Optional[str]
 class MainAnswerResponse(BaseModel):
     session_id: str
     status: str
     current_index: int
     turn_status: str
     followup_question: Optional[str]
-
+    answer_category: Optional[str] = None
+    suggested_action: Optional[str] = None
+    response_to_user: Optional[str] = None
+    answer_relevance_confidence: Optional[float] = None
 
 class FollowupQuestionResponse(BaseModel):
     session_id: str
@@ -59,4 +68,3 @@ class ReportResponse(BaseModel):
     session_id: str
     status: str
     report: dict[str, Any]
-

@@ -3,21 +3,26 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from api.infra.config import LLM_BASE_URL, LLM_MODEL, ROOT
+from api.infra.config import ROOT
 
 
 def build_llm() -> Any:
     load_dotenv(ROOT / ".env")
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
+
+    api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise RuntimeError("DEEPSEEK_API_KEY is not configured")
 
     from langchain_openai import ChatOpenAI
 
     return ChatOpenAI(
-        model=LLM_MODEL,
+        model="deepseek-v4-flash",
         api_key=api_key,
-        base_url=LLM_BASE_URL,
+        base_url="https://api.deepseek.com",
         temperature=0,
+        extra_body={
+            "thinking": {
+                "type": "disabled",
+            }
+        },
     )
-

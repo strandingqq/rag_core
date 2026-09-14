@@ -7,6 +7,7 @@ from api.agents.orchestrator_schemas import OrchestratorAction, RequestEvent
 from api.dependencies import get_db, get_llm
 from api.domain.models import InterviewPlan, InterviewSession, InterviewTurn
 from api.errors import InterviewStateError
+from api.services.answer_relevance_service import classify_main_answer_relevance
 from api.schemas.interviews import (
     AnswerRequest,
     CreateInterviewRequest,
@@ -89,7 +90,41 @@ def submit_main_answer(
             f"orchestrator returned unexpected action: {decision.action}"
         )
 
-    session = _submit_main_answer(session, request.answer, llm=get_llm())
+    # session = _submit_main_answer(session, request.answer, llm=get_llm())
+    # update_session(session)
+    # turn = get_current_turn(session)
+
+    # return MainAnswerResponse(
+    #     session_id=session.session_id,
+    #     status=session.status,
+    #     current_index=session.current_index,
+    #     turn_status=turn.status,
+    #     followup_question=turn.followup_question,
+    # )
+    turn = get_current_turn(session)
+    llm = get_llm()
+
+    relevance = classify_main_answer_relevance(
+        session=session,
+        turn=turn,
+        answer=request.answer,
+        llm=llm,
+    )
+
+    if relevance.suggested_action != "continue_interview":
+        return MainAnswerResponse(
+            session_id=session.session_id,
+            status=session.status,
+            current_index=session.current_index,
+            turn_status=turn.status,
+            followup_question=None,
+            answer_category=relevance.category,
+            suggested_action=relevance.suggested_action,
+            response_to_user=relevance.response_to_user,
+            answer_relevance_confidence=relevance.confidence,
+        )
+
+    session = _submit_main_answer(session, request.answer, llm=llm)
     update_session(session)
     turn = get_current_turn(session)
 
@@ -99,6 +134,10 @@ def submit_main_answer(
         current_index=session.current_index,
         turn_status=turn.status,
         followup_question=turn.followup_question,
+        answer_category=relevance.category,
+        suggested_action=relevance.suggested_action,
+        response_to_user=None,
+        answer_relevance_confidence=relevance.confidence,
     )
 
 
@@ -217,6 +256,7 @@ def _submit_main_answer(
     turn.main_answer = answer
     materials = build_followup_materials(session, turn)
     turn.followup_question = generate_followup_question(turn, materials, llm=llm)
+    
     turn.status = "waiting_followup_answer"
     session.updated_time = _now()
     return session
