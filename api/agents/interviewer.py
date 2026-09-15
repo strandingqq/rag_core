@@ -10,7 +10,7 @@ from api.agents.interviewer_tools import (
     validate_interviewer_output,
 )
 from api.infra.llm import build_llm
-
+from langsmith import traceable
 
 INTERVIEWER_PROMPT = """
 你是一个严格但公平的技术面试官，负责基于候选人的主回答生成一个追问问题。
@@ -69,7 +69,7 @@ clarification
 {previous_turn_summary}
 """
 
-
+@traceable(name="InterviewerAgent", run_type="chain")
 def run_interviewer_agent(
     context: InterviewerContext,
     llm: Any | None = None,

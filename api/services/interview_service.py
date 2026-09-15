@@ -8,6 +8,7 @@ from api.dependencies import get_db, get_llm
 from api.domain.models import InterviewPlan, InterviewSession, InterviewTurn
 from api.errors import InterviewStateError
 from api.services.answer_relevance_service import classify_main_answer_relevance
+from api.services.interviewer_service import generate_followup_with_interviewer_agent
 from api.schemas.interviews import (
     AnswerRequest,
     CreateInterviewRequest,
@@ -28,7 +29,7 @@ from api.services.planner import build_interview_plan
 from api.services.report import generate_interview_report
 from api.session_store import get_session as load_session
 from api.session_store import save_session, update_session
-
+from langsmith import traceable
 
 def create_interview(request: CreateInterviewRequest) -> CreateInterviewResponse:
     print("now is in create_interview")
@@ -72,7 +73,7 @@ def get_current_question(session_id: str) -> CurrentQuestionResponse:
         question=_get_current_question_text(session),
     )
 
-
+@traceable(name="SubmitMainAnswerWorkflow", run_type="chain")
 def submit_main_answer(
     session_id: str,
     request: AnswerRequest,
@@ -254,9 +255,14 @@ def _submit_main_answer(
         )
 
     turn.main_answer = answer
-    materials = build_followup_materials(session, turn)
-    turn.followup_question = generate_followup_question(turn, materials, llm=llm)
-    
+    # materials = build_followup_materials(session, turn)
+    # turn.followup_question = generate_followup_question(turn, materials, llm=llm)
+    interviewer_output = generate_followup_with_interviewer_agent(
+        session=session,
+        turn=turn,
+        llm=llm,
+    )
+    turn.followup_question = interviewer_output.followup_question
     turn.status = "waiting_followup_answer"
     session.updated_time = _now()
     return session

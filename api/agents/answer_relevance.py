@@ -11,7 +11,7 @@ from api.agents.answer_relevance_schemas import (
 )
 from api.agents.answer_relevance_tools import validate_answer_relevance_result
 from api.infra.llm import build_llm
-
+from langsmith import traceable
 
 ANSWER_RELEVANCE_SYSTEM_PROMPT = """
 你是 AI 技术面试系统中的回答相关性判断 Agent。
@@ -138,7 +138,7 @@ def build_answer_relevance_graph(llm: Any | None = None):
 
     return workflow.compile()
 
-
+@traceable(name="AnswerRelevanceAgent", run_type="chain")
 def run_answer_relevance_agent(
     context: AnswerRelevanceContext,
     llm: Any | None = None,

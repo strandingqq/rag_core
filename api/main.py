@@ -5,11 +5,28 @@ from api.errors import InterviewStateError, QuestionSelectionError, SessionNotFo
 from api.routers.health import router as health_router
 from api.routers.interviews import router as interviews_router
 from api.routers.learning_advice import router as learning_advice_router
+from dotenv import load_dotenv
+from api.infra.config import ROOT
 
+load_dotenv(ROOT / ".env")
 app = FastAPI(
     title="AI Interview Training API",
     version="0.1.0",
 )
+
+
+from langsmith import traceable
+
+
+@traceable(name="langsmith_test")
+def langsmith_test():
+    return "hello langsmith"
+
+
+@app.get("/test-langsmith")
+def test_langsmith():
+    return {"result": langsmith_test()}
+
 
 app.include_router(health_router)
 app.include_router(interviews_router)

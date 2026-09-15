@@ -10,8 +10,9 @@ from api.agents.orchestrator_tools import (
     build_session_snapshot, # 分析session
 )
 from api.domain.models import InterviewSession
+from langsmith import traceable
 
-
+@traceable(name="RuleOrchestrator", run_type="chain")
 def run_orchestrator(
     request_event: RequestEvent | str, # 请求事件
     session: InterviewSession | None = None, # session
